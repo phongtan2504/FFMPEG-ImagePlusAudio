@@ -1,0 +1,50 @@
+name: 3. Ghep Audio Va Video Nen (Tao Video Youtube)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render-video:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lấy mã nguồn Repo
+        uses: actions/checkout@v4
+
+      - name: Cài đặt FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Ghép Audio với Video/Ảnh nền hàng loạt
+        run: |
+          mkdir -p output_video
+          
+          # Quét tất cả file .mp3 trong repo
+          shopt -s nullglob
+          for audio in *.mp3; do
+            if [ -f "$audio" ]; then
+              filename="${audio%.*}"
+              echo "----------------------------------------"
+              echo "Đang xử lý ghép video cho: $audio"
+              
+              # Trường hợp 1: Nếu có file nền là video (nen.mp4) - Lặp lại video nền cho bằng độ dài audio
+              if [ -f "nen.mp4" ]; then
+                ffmpeg -stream_loop -1 -i nen.mp4 -i "$audio" -c:v libx264 -preset ultrafast -tune zerolatency -c:a copy -shortest "output_video/${filename}.mp4" -y
+              
+              # Trường hợp 2: Nếu có file nền là ảnh (nen.jpg hoặc nen.png)
+              elif [ -f "nen.jpg" ]; then
+                ffmpeg -loop 1 -i nen.jpg -i "$audio" -c:v libx264 -preset ultrafast -tune stillimage -c:a copy -pix_fmt yuv420p -shortest "output_video/${filename}.mp4" -y
+              elif [ -f "nen.png" ]; then
+                ffmpeg -loop 1 -i nen.png -i "$audio" -c:v libx264 -preset ultrafast -tune stillimage -c:a copy -pix_fmt yuv420p -shortest "output_video/${filename}.mp4" -y
+              else
+                echo "LỖI: Không tìm thấy file nen.mp4 hoặc nen.jpg/nen.png trong Repo!"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Tải toàn bộ Video đã ghép về máy (.zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: danh-sach-video-youtube
+          path: output_video/
