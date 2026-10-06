@@ -13,6 +13,16 @@ on:
         required: true
         default: ""
         type: string
+      bg_volume:
+        description: "Âm lượng video nền"
+        required: true
+        default: "0 (Tắt hoàn toàn tiếng video nền)"
+        type: choice
+        options:
+          - "0 (Tắt hoàn toàn tiếng video nền)"
+          - "0.1 (Giảm còn 10% - Rất nhỏ)"
+          - "0.2 (Giảm còn 20% - Vừa phải)"
+          - "0.5 (Giảm còn 50% - Nửa âm lượng)"
       output_name:
         description: "Tên file video đầu ra (không ghi .mp4)"
         required: true
@@ -39,9 +49,21 @@ jobs:
           echo "Đang tải Audio..."
           curl -L "${{ github.event.inputs.audio_url }}" -o bg_audio.mp3
 
-      - name: Ghép Audio vào Video (Tự động lặp video nếu audio dài hơn)
+      - name: Ghép Audio và Chỉnh Âm Lượng Video Nền
         run: |
-          ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest output.mp4
+          VOL_CHOICE="${{ github.event.inputs.bg_volume }}"
+          VOL=$(echo $VOL_CHOICE | awk '{print $1}')
+
+          if [ "$VOL" == "0" ]; then
+            # Tắt sạch tiếng của video nền, chỉ giữ lại file audio chính
+            ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
+              -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest output.mp4
+          else
+            # Giảm âm thanh video nền xuống mức chọn và trộn chung với file audio chính
+            ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
+              -filter_complex "[0:a]volume=$VOL[bg_sound];[1:a][bg_sound]amix=inputs=2:duration=first[a_out]" \
+              -map 0:v:0 -map "[a_out]" -c:v copy -c:a aac -shortest output.mp4
+          fi
 
       - name: Tải Video về (Artifacts)
         uses: actions/upload-artifact@v4
