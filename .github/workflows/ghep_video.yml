@@ -54,15 +54,21 @@ jobs:
           VOL_CHOICE="${{ github.event.inputs.bg_volume }}"
           VOL=$(echo $VOL_CHOICE | awk '{print $1}')
 
+          # Đo chính xác thời lượng (giây) của file audio
+          DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 bg_audio.mp3)
+          echo "Độ dài audio chính: $DURATION giây"
+
           if [ "$VOL" == "0" ]; then
-            # Tắt sạch tiếng của video nền, chỉ giữ lại file audio chính
+            # Tắt tiếng video nền và cắt video chuẩn theo độ dài audio chính (-t $DURATION)
             ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
-              -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest output.mp4
+              -t $DURATION \
+              -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 output.mp4
           else
-            # Giảm âm thanh video nền xuống mức chọn và trộn chung với file audio chính
+            # Giảm âm lượng video nền và cắt chuẩn theo độ dài audio chính
             ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
+              -t $DURATION \
               -filter_complex "[0:a]volume=$VOL[bg_sound];[1:a][bg_sound]amix=inputs=2:duration=first[a_out]" \
-              -map 0:v:0 -map "[a_out]" -c:v copy -c:a aac -shortest output.mp4
+              -map 0:v:0 -map "[a_out]" -c:v copy -c:a aac output.mp4
           fi
 
       - name: Tải Video về (Artifacts)
