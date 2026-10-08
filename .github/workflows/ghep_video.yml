@@ -1,78 +1,65 @@
-name: "3. Ghep Audio Va Video Nen (Tao Video Youtube)"
+name: 3. Ghep Audio Va Video Nen (Tao Video Youtube)
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: "Dán URL Video nền (Catbox.moe)"
+        description: 'Dán URL Video nền (Catbox.moe)'
         required: true
-        default: ""
         type: string
       audio_url:
-        description: "Dán URL File Audio (Catbox.moe)"
+        description: 'Dán URL File Audio (Catbox.moe)'
         required: true
-        default: ""
         type: string
       bg_volume:
-        description: "Âm lượng video nền"
+        description: 'Âm lượng video nền'
         required: true
-        default: "0 (Tắt hoàn toàn tiếng video nền)"
+        default: '0'
+        type: string
+      audio_speed:
+        description: 'Tốc độ Audio đọc'
+        required: true
+        default: '1.0'
         type: choice
         options:
-          - "0 (Tắt hoàn toàn tiếng video nền)"
-          - "0.1 (Giảm còn 10% - Rất nhỏ)"
-          - "0.2 (Giảm còn 20% - Vừa phải)"
-          - "0.5 (Giảm còn 50% - Nửa âm lượng)"
+          - '0.75'
+          - '1.0'
+          - '1.25'
       output_name:
-        description: "Tên file video đầu ra (không ghi .mp4)"
+        description: 'Tên file video đầu ra (không ghi .mp4)'
         required: true
-        default: "video_youtube_final"
+        default: 'video_youtube_final'
         type: string
 
 jobs:
-  merge_media:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Lấy mã nguồn
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Cài đặt FFmpeg và Curl
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Download input files
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ffmpeg curl
+          curl -L "${{ github.event.inputs.video_url }}" -o input_video.mp4
+          curl -L "${{ github.event.inputs.audio_url }}" -o input_audio.mp3
 
-      - name: Tải Video nền và Audio từ URL
+      - name: Process Audio Speed and Merge Video
         run: |
-          echo "Đang tải Video nền..."
-          curl -L "${{ github.event.inputs.video_url }}" -o bg_video.mp4
+          # Tính toán bộ lọc tốc độ âm thanh (atempo)
+          SPEED="${{ github.event.inputs.audio_speed }}"
+          
+          # Đổi tốc độ file audio sang file audio_speed.mp3
+          ffmpeg -i input_audio.mp3 -filter:a "atempo=${SPEED}" audio_speed.mp3 -y
 
-          echo "Đang tải Audio..."
-          curl -L "${{ github.event.inputs.audio_url }}" -o bg_audio.mp3
+          # Ghép audio đã đổi tốc độ vào video nền
+          BG_VOL="${{ github.event.inputs.bg_volume }}"
+          OUT_NAME="${{ github.event.inputs.output_name }}.mp4"
 
-      - name: Ghép Audio và Chỉnh Âm Lượng Video Nền
-        run: |
-          VOL_CHOICE="${{ github.event.inputs.bg_volume }}"
-          VOL=$(echo $VOL_CHOICE | awk '{print $1}')
-
-          # Đo chính xác thời lượng (giây) của file audio
-          DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 bg_audio.mp3)
-          echo "Độ dài audio chính: $DURATION giây"
-
-          if [ "$VOL" == "0" ]; then
-            # Tắt tiếng video nền và cắt video chuẩn theo độ dài audio chính (-t $DURATION)
-            ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
-              -t $DURATION \
-              -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 output.mp4
+          if [ "$BG_VOL" -eq "0" ]; then
+            ffmpeg -i input_video.mp4 -i audio_speed.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "$OUT_NAME" -y
           else
-            # Giảm âm lượng video nền và cắt chuẩn theo độ dài audio chính
-            ffmpeg -stream_loop -1 -i bg_video.mp4 -i bg_audio.mp3 \
-              -t $DURATION \
-              -filter_complex "[0:a]volume=$VOL[bg_sound];[1:a][bg_sound]amix=inputs=2:duration=first[a_out]" \
-              -map 0:v:0 -map "[a_out]" -c:v copy -c:a aac output.mp4
+            ffmpeg -i input_video.mp4 -i audio_speed.mp3 -filter_complex "[0:a]volume=${BG_VOL}[a0];[1:a]volume=1.0[a1];[a0][a1]amix=inputs=2:duration=first[a]" -map 0:v:0 -map "[a]" -c:v copy -c:a aac -shortest "$OUT_NAME" -y
           fi
-
-      - name: Tải Video về (Artifacts)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.inputs.output_name }}
-          path: output.mp4
