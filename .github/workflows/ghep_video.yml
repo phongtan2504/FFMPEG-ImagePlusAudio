@@ -1,65 +1,107 @@
-name: 3. Ghep Audio Va Video Nen (Tao Video Youtube)
+name: "3. Ghep Audio Va Video Nen (Tao Video Youtube)"
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'Dán URL Video nền (Catbox.moe)'
+        description: "Dán URL Video nền (Catbox.moe)"
         required: true
+        default: ""
         type: string
       audio_url:
-        description: 'Dán URL File Audio (Catbox.moe)'
+        description: "Dán URL File Audio (Catbox.moe)"
         required: true
-        type: string
-      bg_volume:
-        description: 'Âm lượng video nền'
-        required: true
-        default: '0'
+        default: ""
         type: string
       audio_speed:
-        description: 'Tốc độ Audio đọc'
+        description: "Chọn tốc độ đọc / phát Audio"
         required: true
-        default: '1.0'
+        default: "1.0 (Bình thường - 1.0x)"
         type: choice
         options:
-          - '0.75'
-          - '1.0'
-          - '1.25'
-      output_name:
-        description: 'Tên file video đầu ra (không ghi .mp4)'
+          - "0.75 (Chậm - 0.75x)"
+          - "1.0 (Bình thường - 1.0x)"
+          - "1.25 (Nhanh - 1.25x)"
+      bg_volume:
+        description: "Âm lượng video nền"
         required: true
-        default: 'video_youtube_final'
+        default: "0 (Tắt hoàn toàn tiếng video nền)"
+        type: choice
+        options:
+          - "0 (Tắt hoàn toàn tiếng video nền)"
+          - "0.1 (Giảm còn 10% - Rất nhỏ)"
+          - "0.2 (Giảm còn 20% - Vừa phải)"
+          - "0.5 (Giảm còn 50% - Nửa âm lượng)"
+      output_name:
+        description: "Tên file video đầu ra (không ghi .mp4)"
+        required: true
+        default: "video_youtube_final"
         type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Lấy mã nguồn
+        uses: actions/checkout@v4
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Download input files
+      - name: Cài đặt FFmpeg và Curl
         run: |
-          curl -L "${{ github.event.inputs.video_url }}" -o input_video.mp4
-          curl -L "${{ github.event.inputs.audio_url }}" -o input_audio.mp3
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg curl
 
-      - name: Process Audio Speed and Merge Video
+      - name: Tải Video nền và Audio từ URL
         run: |
-          # Tính toán bộ lọc tốc độ âm thanh (atempo)
-          SPEED="${{ github.event.inputs.audio_speed }}"
-          
-          # Đổi tốc độ file audio sang file audio_speed.mp3
-          ffmpeg -i input_audio.mp3 -filter:a "atempo=${SPEED}" audio_speed.mp3 -y
+          echo "Đang tải Video nền..."
+          curl -sL "${{ github.event.inputs.video_url }}" -o bg_video.mp4
 
-          # Ghép audio đã đổi tốc độ vào video nền
-          BG_VOL="${{ github.event.inputs.bg_volume }}"
-          OUT_NAME="${{ github.event.inputs.output_name }}.mp4"
+          echo "Đang tải Audio..."
+          curl -sL "${{ github.event.inputs.audio_url }}" -o bg_audio.mp3
 
-          if [ "$BG_VOL" -eq "0" ]; then
-            ffmpeg -i input_video.mp4 -i audio_speed.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "$OUT_NAME" -y
-          else
-            ffmpeg -i input_video.mp4 -i audio_speed.mp3 -filter_complex "[0:a]volume=${BG_VOL}[a0];[1:a]volume=1.0[a1];[a0][a1]amix=inputs=2:duration=first[a]" -map 0:v:0 -map "[a]" -c:v copy -c:a aac -shortest "$OUT_NAME" -y
+          if [ ! -s bg_video.mp4 ]; then
+            echo "LỖI: Link Video nền không hợp lệ hoặc không tải được!"
+            exit 1
           fi
+          if [ ! -s bg_audio.mp3 ]; then
+            echo "LỖI: Link Audio không hợp lệ hoặc không tải được!"
+            exit 1
+          fi
+
+      - name: Điều chỉnh tốc độ Audio
+        run: |
+          SPD_CHOICE="${{ github.event.inputs.audio_speed }}"
+          SPD=$(echo $SPD_CHOICE | awk '{print $1}')
+
+          echo "Đang chỉnh tốc độ Audio sang ${SPD}x..."
+          if [ "$SPD" == "1.0" ]; then
+            cp bg_audio.mp3 bg_audio_ready.mp3
+          else
+            ffmpeg -y -i bg_audio.mp3 -filter:a "atempo=$SPD" bg_audio_ready.mp3
+          fi
+
+      - name: Ghép Audio và Chỉnh Âm Lượng Video Nền
+        run: |
+          VOL_CHOICE="${{ github.event.inputs.bg_volume }}"
+          VOL=$(echo $VOL_CHOICE | awk '{print $1}')
+
+          # Đo thời lượng thực tế của file audio sau khi đổi tốc độ
+          DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 bg_audio_ready.mp3)
+          echo "Độ dài audio sau khi đổi tốc độ: $DURATION giây"
+
+          if [ "$VOL" == "0" ]; then
+            ffmpeg -y -stream_loop -1 -i bg_video.mp4 -i bg_audio_ready.mp3 \
+              -t $DURATION \
+              -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 output.mp4
+          else
+            ffmpeg -y -stream_loop -1 -i bg_video.mp4 -i bg_audio_ready.mp3 \
+              -t $DURATION \
+              -filter_complex "[0:a]volume=$VOL[bg_sound];[1:a][bg_sound]amix=inputs=2:duration=first[a_out]" \
+              -map 0:v:0 -map "[a_out]" -c:v copy -c:a aac output.mp4
+          fi
+
+      - name: Tải Video về (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.output_name }}
+          path: output.mp4
+          if-no-files-found: error
