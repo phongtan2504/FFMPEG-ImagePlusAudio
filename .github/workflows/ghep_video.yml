@@ -48,24 +48,47 @@ jobs:
       - name: Cài đặt FFmpeg và Curl
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ffmpeg curl
+          sudo apt-get install -y ffmpeg curl python3
 
       - name: Tải Video nền và Audio từ URL
+        env:
+          RAW_VIDEO_URL: "${{ github.event.inputs.video_url }}"
+          RAW_AUDIO_URL: "${{ github.event.inputs.audio_url }}"
         run: |
-          echo "Đang tải Video nền..."
-          curl -sL "${{ github.event.inputs.video_url }}" -o bg_video.mp4
+          python3 -c '
+          import os, sys, subprocess
 
-          echo "Đang tải Audio..."
-          curl -sL "${{ github.event.inputs.audio_url }}" -o bg_audio.mp3
+          def clean_url(url):
+              url = url.strip()
+              if url and not url.startswith(("http://", "https://")):
+                  url = "https://" + url
+              return url
 
-          if [ ! -s bg_video.mp4 ]; then
-            echo "LỖI: Link Video nền không hợp lệ hoặc không tải được!"
-            exit 1
-          fi
-          if [ ! -s bg_audio.mp3 ]; then
-            echo "LỖI: Link Audio không hợp lệ hoặc không tải được!"
-            exit 1
-          fi
+          v_url = clean_url(os.environ.get("RAW_VIDEO_URL", ""))
+          a_url = clean_url(os.environ.get("RAW_AUDIO_URL", ""))
+
+          if not v_url:
+              print("LỖI: Chưa dán link Video nền!")
+              sys.exit(1)
+
+          if not a_url:
+              print("LỖI: Chưa dán link Audio!")
+              sys.exit(1)
+
+          print(f"Đang tải Video nền từ: {v_url}")
+          res_v = subprocess.run(["curl", "-sL", v_url, "-o", "bg_video.mp4"])
+          if res_v.returncode != 0 or not os.path.exists("bg_video.mp4") or os.path.getsize("bg_video.mp4") == 0:
+              print("LỖI: Link Video nền không tải được! Vui lòng kiểm tra lại link Catbox.")
+              sys.exit(1)
+
+          print(f"Đang tải Audio từ: {a_url}")
+          res_a = subprocess.run(["curl", "-sL", a_url, "-o", "bg_audio.mp3"])
+          if res_a.returncode != 0 or not os.path.exists("bg_audio.mp3") or os.path.getsize("bg_audio.mp3") == 0:
+              print("LỖI: Link Audio không tải được! Vui lòng kiểm tra lại link Catbox.")
+              sys.exit(1)
+
+          print("Tải thành công cả 2 file!")
+          '
 
       - name: Điều chỉnh tốc độ Audio
         run: |
@@ -84,7 +107,6 @@ jobs:
           VOL_CHOICE="${{ github.event.inputs.bg_volume }}"
           VOL=$(echo $VOL_CHOICE | awk '{print $1}')
 
-          # Đo thời lượng thực tế của file audio sau khi đổi tốc độ
           DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 bg_audio_ready.mp3)
           echo "Độ dài audio sau khi đổi tốc độ: $DURATION giây"
 
