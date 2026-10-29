@@ -8,4 +8,9 @@ CompletedFiles/*
 # Or the AVCHD file
 AVCHD/*
 On-Deck/*
+AVCHD*
+*.summary.md
+*.transcript.txt
+*-timecoded.mp4
+*-timecoded.wav
 

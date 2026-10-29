@@ -22,7 +22,7 @@ get_mp4_dimension() {
   [[ -f "$file" ]] || { echo "Error: '$file' not found" >&2; return 1; }
 
   # pull the raw metadata and extract digits
-  mdls -name $2 -raw "$file" \
+  mdls -name "$2" -raw "$file" \
     | grep -Eo '^[0-9]+' \
     || { echo "Error: no height metadata" >&2; return 1; }
 }
@@ -43,8 +43,8 @@ start_time="$hours\:$minutes\:$seconds\;00"
 mp4_files=( *.mp4 )
 infile="${mp4_files[0]}"
 
-# Append  "-timecoded.mov" to the provided label for the file name
-outfile="${label}-timecoded.mov"
+# Append  "-timecoded.mp4" to the provided label for the file name
+outfile="${label}-timecoded.mp4"
 
 # Get dimensions, compute the location of the labels
 
@@ -52,7 +52,7 @@ vh=$(get_mp4_dimension "$infile" "kMDItemPixelHeight")
 vw=$(get_mp4_dimension "$infile" "kMDItemPixelWidth")
 lposx=100
 lposy=$(( vh * 95 / 100 ))
-tposx=$((vw / 2))
+tposx=$((vw / 2 + 100))
 tposy="$lposy"
 
 # echo "============"
@@ -61,10 +61,10 @@ tposy="$lposy"
 # Run the ffmpeg command to read the Zoom .mp4 recording, add a label and timecode and produce a .mov
 #   There are lots of fussy options. See the README.md for details
  
-ffmpeg -i *.mp4 \
+ffmpeg -i "$infile" \
 	-s 1280x720 -c:v libx264 -crf 23 -c:a copy \
-	-vf "drawtext=text=${label}:               x="$lposx":  y="$lposy": fontsize=18:fontcolor=white: box=1:boxcolor=gray, \
-		drawtext=timecode='$start_time': r=30: x="$tposx":  y="$tposy": fontsize=18:fontcolor=white: box=1:boxcolor=gray" \
+	-vf "drawtext=text=${label}:               x=$lposx:  y=$lposy: fontsize=18:fontcolor=white: box=1:boxcolor=gray, \
+		drawtext=timecode='$start_time': r=30: x=$tposx:  y=$tposy: fontsize=18:fontcolor=white: box=1:boxcolor=gray" \
    	-y \
    	"$outfile"
 

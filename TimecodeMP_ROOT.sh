@@ -21,8 +21,8 @@ start_time="$hours\:$minutes\:$seconds\;00"
 # Debug label and start time
 # echo "***** $label" "$start_time"
 
-# Append  "-timecoded.mov" to the provided label for the file name
-outfile="${label}-timecoded.mov"
+# Append  "-timecoded.mp4" to the provided label for the file name
+outfile="${label}-timecoded.mp4"
 
 # Concatenate all the .MPG files in the MP_ROOT folder
 cat MP_ROOT*/101PNV01/*.MPG  > Merged.MPG

@@ -25,25 +25,65 @@ jobs:
       - name: Lấy mã nguồn Repo
         uses: actions/checkout@v4
 
-      - name: Cài đặt ffmpeg và wget
+      - name: Cài đặt ffmpeg và curl
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg wget
+          sudo apt-get install -y ffmpeg curl file
 
       - name: Tải file audio từ Link ngoài (nếu có)
+        env:
+          AUDIO_URL: ${{ github.event.inputs.audio_url }}
         run: |
-          CLEAN_URL=$(echo "${{ github.event.inputs.audio_url }}" | xargs)
+          set -euo pipefail
+          CLEAN_URL="$(printf '%s' "$AUDIO_URL" | xargs)"
           if [ -n "$CLEAN_URL" ]; then
-            echo "Đang tải file audio từ link: $CLEAN_URL"
-            wget --no-check-certificate -O audio_downloaded.mp3 "$CLEAN_URL"
+            echo "Bắt đầu tải audio từ URL đã cung cấp."
+            # -f: lỗi nếu HTTP 4xx/5xx; -L: theo redirect; retry lỗi mạng/5xx.
+            # Không in URL có thể chứa token riêng tư vào log.
+            if ! curl --fail --location --show-error \
+              --retry 3 --retry-delay 2 --retry-all-errors \
+              --connect-timeout 30 --max-time 14400 \
+              --output audio_downloaded.mp3 "$CLEAN_URL"; then
+              echo "::error::Tải audio thất bại. Kiểm tra link có cho phép tải trực tiếp và không yêu cầu đăng nhập."
+              exit 1
+            fi
+
+            if [ ! -s audio_downloaded.mp3 ]; then
+              echo "::error::Server trả về file audio rỗng."
+              exit 1
+            fi
+
+            echo "Dung lượng file tải về:"
+            stat -c '%s bytes' audio_downloaded.mp3
+            echo "Loại file:"
+            file audio_downloaded.mp3
+
+            # Xác nhận đây là media mà ffprobe đọc được, không phải trang HTML hoặc
+            # một file lỗi/đứt đoạn được server trả về với mã HTTP 200.
+            if ! DURATION="$(ffprobe -v error -show_entries format=duration \
+              -of default=noprint_wrappers=1:nokey=1 audio_downloaded.mp3)" || \
+              [ -z "$DURATION" ]; then
+              echo "::error::File tải về không phải audio hợp lệ hoặc bị hỏng. Kiểm tra lại link tải trực tiếp."
+              exit 1
+            fi
+
+            if ! awk -v d="$DURATION" 'BEGIN { exit !(d > 1) }'; then
+              echo "::error::Audio tải về chỉ dài ${DURATION} giây; dừng để tránh tạo video lỗi."
+              exit 1
+            fi
+
+            echo "Thời lượng audio đã xác minh: ${DURATION} giây"
+          else
+            echo "Không nhập URL; sẽ dùng audio có sẵn trong repository."
           fi
 
       - name: Tự động tìm file và Tối ưu độ phân giải
         id: prep
         run: |
+          set -euo pipefail
           # 1. Tìm file ảnh
           IMAGE=$(find . -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \) | head -n 1)
-          
+
           # 2. Tìm file audio
           if [ -f "audio_downloaded.mp3" ]; then
             AUDIO="audio_downloaded.mp3"
@@ -52,11 +92,11 @@ jobs:
           fi
 
           if [ -z "$IMAGE" ] || [ -z "$AUDIO" ]; then
-            echo "Lỗi: Không tìm thấy file ảnh và/hoặc audio!"
+            echo "::error::Không tìm thấy file ảnh và/hoặc audio!"
             exit 1
           fi
 
-          # 3. Ép chiều cao theo lựa chọn, đồng thời tự động làm tròn chiều rộng về số chẵn (trunc(ih*aspect/2)*2)
+          # 3. Ép chiều cao theo lựa chọn, đồng thời làm tròn chiều rộng về số chẵn.
           RES="${{ github.event.inputs.resolution }}"
           if [ "$RES" == "360p" ]; then
             SCALE="scale='trunc(360*a/2)*2':360"
@@ -66,15 +106,26 @@ jobs:
             SCALE="scale='trunc(720*a/2)*2':720"
           elif [ "$RES" == "1080p" ]; then
             SCALE="scale='trunc(1080*a/2)*2':1080"
+          else
+            echo "::error::Độ phân giải không hợp lệ: $RES"
+            exit 1
           fi
 
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "AUDIO=$AUDIO" >> $GITHUB_ENV
-          echo "SCALE=$SCALE" >> $GITHUB_ENV
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "AUDIO=$AUDIO" >> "$GITHUB_ENV"
+          echo "SCALE=$SCALE" >> "$GITHUB_ENV"
+          echo "Audio dùng để ghép: $AUDIO"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$AUDIO"
 
       - name: Ghép thành video
         run: |
-          ffmpeg -loop 1 -i "$IMAGE" -i "$AUDIO" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -vf "$SCALE" -pix_fmt yuv420p -shortest output_video.mp4 -y
+          set -euo pipefail
+          ffmpeg -hide_banner -y -loop 1 -i "$IMAGE" -i "$AUDIO" \
+            -c:v libx264 -tune stillimage -c:a aac -b:a 192k \
+            -vf "$SCALE" -pix_fmt yuv420p -shortest output_video.mp4
+          test -s output_video.mp4
+          echo "Thời lượng video đầu ra:"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 output_video.mp4
 
       - name: Tải video thành phẩm về máy
         uses: actions/upload-artifact@v4
